@@ -34,14 +34,20 @@ class SourceManager {
       ])
     );
 
-    for (const [key, entry] of this.entries) {
-      this._start(key, entry);
-    }
-
     this._rateTicker = setInterval(() => this._tickRates(), 1000);
   }
 
-  /** wire up the dynamic namespace matcher; call once at startup */
+  /**
+   * Wire up the dynamic namespace matcher and connect every source's
+   * upstream caster; call once at startup. The regex matcher MUST be
+   * registered before any `/key` namespace is created (which `_start`
+   * does via `io.of`) - socket.io only routes a connecting client
+   * through the regex-matched parent namespace (and so through the
+   * "connection" listener below, which counts subscribers) the first
+   * time that namespace name is created. Creating it earlier makes
+   * socket.io reuse a plain, uncounted namespace for every real
+   * connection instead.
+   */
   attach() {
     if (this.entries.size === 0) {
       return;
@@ -57,6 +63,10 @@ class SourceManager {
         entry.subscriberCount -= 1;
       });
     });
+
+    for (const [key, entry] of this.entries) {
+      this._start(key, entry);
+    }
   }
 
   /** @returns {Array} per-source health/traffic snapshot, for a status page */
