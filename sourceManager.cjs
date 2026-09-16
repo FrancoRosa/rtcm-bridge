@@ -49,15 +49,31 @@ class SourceManager {
    * time that namespace name is created. Creating it earlier makes
    * socket.io reuse a plain, uncounted namespace for every real
    * connection instead.
+   *
+   * @param {Object} [options]
+   * @param {(token: string) => boolean} [options.authorize] when given,
+   *   a connecting socket must pass `socket.handshake.auth.token` and
+   *   have it accepted by this predicate, or the connection is refused.
    */
-  attach() {
+  attach(options = {}) {
     if (this.entries.size === 0) {
       return;
     }
     const keys = [...this.entries.keys()].map(escapeRegExp);
     const pattern = new RegExp(`^/(?:${keys.join('|')})$`);
+    const parentNsp = this.io.of(pattern);
 
-    this.io.of(pattern).on('connection', (socket) => {
+    if (options.authorize) {
+      parentNsp.use((socket, next) => {
+        const token = socket.handshake.auth && socket.handshake.auth.token;
+        if (options.authorize(token)) {
+          return next();
+        }
+        next(new Error('unauthorized'));
+      });
+    }
+
+    parentNsp.on('connection', (socket) => {
       const key = socket.nsp.name.slice(1);
       const entry = this.entries.get(key);
       entry.subscriberCount += 1;

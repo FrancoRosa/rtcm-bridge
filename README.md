@@ -34,6 +34,7 @@ module.exports = {
     port: 8443,
     host: "127.0.0.1", // '0.0.0.0' to listen on all interfaces directly
     corsOrigin: "*",
+    password: "1234", // dashboard login screen; change this
     tls: {
       // leave disabled if TLS is terminated by Caddy/nginx
       enabled: false,
@@ -125,6 +126,15 @@ node server.cjs        # or: npm start
   independent of whatever lat/lon happens to be configured for that source.
   Once seen, a panel's "broadcast station" row shows it live; it stays
   blank ("detecting...") until the caster sends one of those message types.
+- The dashboard is gated by a simple password screen (`server.password` in
+  `settings.cjs`, default `1234`) - a bare, unlabeled input, terminal-style,
+  centered on screen. `POST /login` with `{"password": "..."}` exchanges it
+  for a session token (kept in `localStorage` so a refresh doesn't re-prompt);
+  that token is required as a `Bearer` header on `/metrics` and as
+  `{ auth: { token } }` on every Socket.IO connection, so the RTCM
+  data itself - not just the page shell - is what's actually gated. Tokens
+  are in-memory and reset on server restart; this is a lightweight
+  deterrent, not hardened auth (no rate-limiting on login attempts).
 - `GET /metrics` — the JSON behind that page:
   ```json
   {

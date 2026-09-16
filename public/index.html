@@ -19,14 +19,47 @@
 
     * { box-sizing: border-box; }
 
+    html, body { height: 100%; }
     body {
       background: var(--bg);
       color: var(--fg);
       font-family: 'JetBrains Mono', Consolas, Menlo, 'DejaVu Sans Mono', 'Courier New', monospace;
       font-size: 14px;
-      margin: 0;
+      margin: 0 auto;
       padding: 2rem;
       max-width: 760px;
+    }
+
+    [hidden] { display: none !important; }
+
+    #lockScreen {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg);
+    }
+    #lockInput {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--fg);
+      font-family: inherit;
+      font-size: 1.1rem;
+      text-align: center;
+      letter-spacing: 0.3em;
+      padding: 0.9rem 1.2rem;
+      width: 14rem;
+      outline: none;
+    }
+    #lockInput:focus { border-color: var(--accent); }
+    #lockInput.shake {
+      border-color: var(--red);
+      animation: shake 0.3s;
+    }
+    @keyframes shake {
+      25% { transform: translateX(-6px); }
+      75% { transform: translateX(6px); }
     }
 
     h1 {
@@ -105,20 +138,32 @@
   </style>
 </head>
 <body>
-  <h1>rtkflow rtcm v3.1 service</h1>
-  <div class="subtitle">Sources stay connected continuously. Open a source to watch it live.</div>
-
-  <div class="statusbar">
-    <div class="item"><span class="label">uptime: </span><span class="value" id="uptime">--</span></div>
-    <div class="item"><span class="label">sources: </span><span class="value" id="sourceCount">--</span></div>
-    <div class="item"><span class="label">clients: </span><span class="value" id="totalClients">--</span></div>
+  <div id="lockScreen">
+    <input id="lockInput" type="password" autocomplete="off" autofocus />
   </div>
 
-  <div id="sources"></div>
-  <div id="error"></div>
+  <div id="app" hidden>
+    <h1>rtkflow rtcm v3.1 service</h1>
+    <div class="subtitle">Sources stay connected continuously. Open a source to watch it live.</div>
+
+    <div class="statusbar">
+      <div class="item"><span class="label">uptime: </span><span class="value" id="uptime">--</span></div>
+      <div class="item"><span class="label">sources: </span><span class="value" id="sourceCount">--</span></div>
+      <div class="item"><span class="label">clients: </span><span class="value" id="totalClients">--</span></div>
+    </div>
+
+    <div id="sources"></div>
+    <div id="error"></div>
+  </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
+    const TOKEN_STORAGE_KEY = 'ntrip-dashboard-token';
+    let authToken = null;
+
+    const appEl = document.getElementById('app');
+    const lockScreenEl = document.getElementById('lockScreen');
+    const lockInputEl = document.getElementById('lockInput');
     const sourcesEl = document.getElementById('sources');
     const errorEl = document.getElementById('error');
     const rendered = new Set();
@@ -206,7 +251,7 @@
 
     function watch(key) {
       if (sockets.has(key)) return;
-      const socket = io('/' + key);
+      const socket = io('/' + key, { auth: { token: authToken } });
       socket.on('connect', () => log(key, 'connected'));
       socket.on('connect_error', (err) => log(key, `connect_error: ${err.message}`));
       socket.on('rtcm', (data) => log(key, `rtcm: ${data.byteLength ?? data.length} bytes`));
@@ -252,7 +297,10 @@
 
     async function refresh() {
       try {
-        const res = await fetch('/metrics', { cache: 'no-store' });
+        const res = await fetch('/metrics', {
+          cache: 'no-store',
+          headers: { Authorization: `Bearer ${authToken}` }
+        });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         update(await res.json());
         errorEl.textContent = '';
@@ -261,8 +309,66 @@
       }
     }
 
-    refresh();
-    setInterval(refresh, 1000);
+    function startApp() {
+      appEl.hidden = false;
+      lockScreenEl.hidden = true;
+      refresh();
+      setInterval(refresh, 1000);
+    }
+
+    function showLockScreen() {
+      appEl.hidden = true;
+      lockScreenEl.hidden = false;
+      lockInputEl.value = '';
+      lockInputEl.focus();
+    }
+
+    async function tryUnlock(password) {
+      try {
+        const res = await fetch('/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password })
+        });
+        if (!res.ok) {
+          return false;
+        }
+        const { token } = await res.json();
+        authToken = token;
+        localStorage.setItem(TOKEN_STORAGE_KEY, token);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    async function tryStoredToken(token) {
+      const res = await fetch('/metrics', { headers: { Authorization: `Bearer ${token}` } });
+      return res.ok;
+    }
+
+    lockInputEl.addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter') return;
+      const password = lockInputEl.value;
+      lockInputEl.value = '';
+      if (await tryUnlock(password)) {
+        startApp();
+      } else {
+        lockInputEl.classList.add('shake');
+        setTimeout(() => lockInputEl.classList.remove('shake'), 300);
+      }
+    });
+
+    (async () => {
+      const stored = localStorage.getItem(TOKEN_STORAGE_KEY);
+      if (stored && (await tryStoredToken(stored))) {
+        authToken = stored;
+        startApp();
+      } else {
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
+        showLockScreen();
+      }
+    })();
   </script>
 </body>
 </html>

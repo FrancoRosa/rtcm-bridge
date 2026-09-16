@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const https = require('https');
+const crypto = require('crypto');
 const { Server } = require('socket.io');
 const { SourceManager } = require('./sourceManager.cjs');
 
@@ -13,6 +14,43 @@ const MIME_TYPES = { '.html': 'text/html', '.js': 'text/javascript' };
 
 const startTime = Date.now();
 let manager = null;
+
+// simple in-memory session tokens for the dashboard's login screen; they
+// reset on restart, which is fine for this lightweight gate
+const sessions = new Set();
+
+function tokenFromRequest(req) {
+  const header = req.headers['authorization'] || '';
+  return header.replace(/^Bearer\s+/i, '');
+}
+
+function handleLogin(req, res) {
+  let body = '';
+  req.on('data', (chunk) => {
+    body += chunk;
+    if (body.length > 1024) {
+      req.destroy();
+    }
+  });
+  req.on('end', () => {
+    let password;
+    try {
+      password = JSON.parse(body).password;
+    } catch {
+      password = undefined;
+    }
+
+    if (password !== undefined && password === (serverConfig.password || '1234')) {
+      const token = crypto.randomUUID();
+      sessions.add(token);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ token }));
+    } else {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'invalid password' }));
+    }
+  });
+}
 
 function serveFile(filePath, res) {
   fs.readFile(filePath, (err, content) => {
@@ -27,7 +65,17 @@ function serveFile(filePath, res) {
 }
 
 function staticHandler(req, res) {
+  if (req.method === 'POST' && req.url === '/login') {
+    handleLogin(req, res);
+    return;
+  }
+
   if (req.url === '/metrics') {
+    if (!sessions.has(tokenFromRequest(req))) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'unauthorized' }));
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
@@ -65,7 +113,7 @@ function main() {
   const io = new Server(httpServer, { cors: { origin: serverConfig.corsOrigin || '*' } });
 
   manager = new SourceManager(settings.sources, io);
-  manager.attach();
+  manager.attach({ authorize: (token) => sessions.has(token) });
 
   const port = serverConfig.port || 8443;
   const host = serverConfig.host || '0.0.0.0';
