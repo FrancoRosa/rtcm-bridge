@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>rtkflow rtcm service</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap');
+
+    :root {
+      --bg: #0b0e0c;
+      --panel: #10140f;
+      --border: #2a3a2c;
+      --fg: #d4f7d4;
+      --dim: #6f8f73;
+      --accent: #4be36a;
+      --amber: #e3c94b;
+      --red: #ff6b6b;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: 'JetBrains Mono', Consolas, Menlo, 'DejaVu Sans Mono', 'Courier New', monospace;
+      font-size: 14px;
+      margin: 0;
+      padding: 2rem;
+      max-width: 760px;
+    }
+
+    h1 {
+      margin: 0 0 0.25rem;
+      color: var(--accent);
+      font-size: 1.1rem;
+      letter-spacing: 0.05em;
+    }
+    h1::before { content: '> '; color: var(--dim); }
+    h1::after {
+      content: '_';
+      animation: blink 1s step-end infinite;
+      color: var(--accent);
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .subtitle { color: var(--dim); margin-bottom: 1rem; }
+
+    .statusbar {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      padding: 0.6rem 0.9rem;
+      margin-bottom: 1.5rem;
+      display: flex;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+    }
+    .statusbar .item .label { color: var(--dim); }
+    .statusbar .item .value { color: var(--fg); font-weight: 600; }
+
+    details {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      margin-bottom: 0.6rem;
+      padding: 0.6rem 0.9rem;
+    }
+    summary {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      list-style: none;
+    }
+    summary::-webkit-details-marker { display: none; }
+    summary::before { content: '$ '; color: var(--dim); }
+    summary .key { color: var(--accent); font-weight: 600; }
+    summary .muted { color: var(--dim); }
+
+    .badge { font-weight: 600; }
+    .badge.ok::before { content: '[OK] '; }
+    .badge.ok { color: var(--accent); }
+    .badge.stale::before { content: '[STALE] '; }
+    .badge.stale { color: var(--amber); }
+    .badge.error::before { content: '[ERROR] '; }
+    .badge.error { color: var(--red); }
+
+    .detail-body { margin-top: 0.6rem; padding-left: 1.1rem; border-left: 1px dashed var(--border); }
+    table { width: 100%; border-collapse: collapse; }
+    td { padding: 0.25rem 0; border-bottom: 1px dotted var(--border); }
+    td:first-child { color: var(--dim); }
+    td:last-child { text-align: right; color: var(--fg); }
+
+    .log {
+      white-space: pre;
+      font-size: 0.8rem;
+      color: var(--dim);
+      margin-top: 0.5rem;
+      max-height: 8rem;
+      overflow-y: auto;
+      border-top: 1px solid var(--border);
+      padding-top: 0.4rem;
+    }
+
+    #error { color: var(--red); margin-top: 1rem; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <h1>rtkflow rtcm v3.1 service</h1>
+  <div class="subtitle">Sources stay connected continuously. Open a source to watch it live.</div>
+
+  <div class="statusbar">
+    <div class="item"><span class="label">uptime: </span><span class="value" id="uptime">--</span></div>
+    <div class="item"><span class="label">sources: </span><span class="value" id="sourceCount">--</span></div>
+    <div class="item"><span class="label">clients: </span><span class="value" id="totalClients">--</span></div>
+  </div>
+
+  <div id="sources"></div>
+  <div id="error"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const sourcesEl = document.getElementById('sources');
+    const errorEl = document.getElementById('error');
+    const rendered = new Set();
+    const sockets = new Map(); // key -> active socket.io connection while expanded
+
+    function healthOf(s) {
+      // trust actual recent data over the upstream client's own "ready" flag:
+      // some casters reply with an HTTP-style handshake that ntrip-client
+      // never marks ready, even though RTCM keeps flowing fine.
+      if (s.error) return { text: 'error', cls: 'error' };
+      if (s.lastDataAgoMs !== null && s.lastDataAgoMs <= 15000) return { text: 'ok', cls: 'ok' };
+      if (!s.ready && s.lastDataAgoMs === null) return { text: 'connecting', cls: 'stale' };
+      return { text: 'stale', cls: 'stale' };
+    }
+
+    function formatBytes(bytes) {
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    }
+
+    function formatUptime(seconds) {
+      const d = Math.floor(seconds / 86400);
+      const h = Math.floor((seconds % 86400) / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = seconds % 60;
+      const parts = [];
+      if (d) parts.push(`${d}d`);
+      if (d || h) parts.push(`${h}h`);
+      if (d || h || m) parts.push(`${m}m`);
+      parts.push(`${s}s`);
+      return parts.join(' ');
+    }
+
+    function ensureRendered(key) {
+      if (rendered.has(key)) return;
+      rendered.add(key);
+
+      const details = document.createElement('details');
+      details.innerHTML = `
+        <summary>
+          <span class="key">${key}</span>
+          <span class="badge" id="badge-${key}"></span>
+          <span class="muted"><span id="clients-${key}"></span> clients &middot; <span id="kbps-${key}"></span> kbps</span>
+        </summary>
+        <div class="detail-body">
+          <table>
+            <tr><td>host</td><td id="host-${key}"></td></tr>
+            <tr><td>mountpoint</td><td id="mount-${key}"></td></tr>
+            <tr><td>total data</td><td id="total-${key}"></td></tr>
+            <tr><td>last data</td><td id="last-${key}"></td></tr>
+          </table>
+          <div class="log" id="log-${key}"></div>
+        </div>
+      `;
+      sourcesEl.appendChild(details);
+
+      details.addEventListener('toggle', () => {
+        if (details.open) {
+          watch(key);
+        } else {
+          unwatch(key);
+        }
+      });
+    }
+
+    function log(key, line) {
+      const el = document.getElementById(`log-${key}`);
+      el.textContent = `${new Date().toISOString()} ${line}\n${el.textContent}`.slice(0, 3000);
+    }
+
+    function watch(key) {
+      if (sockets.has(key)) return;
+      const socket = io('/' + key);
+      socket.on('connect', () => log(key, 'connected'));
+      socket.on('connect_error', (err) => log(key, `connect_error: ${err.message}`));
+      socket.on('rtcm', (data) => log(key, `rtcm: ${data.byteLength ?? data.length} bytes`));
+      socket.on('source-error', (msg) => log(key, `source-error: ${msg.error}`));
+      socket.on('source-closed', () => log(key, 'source closed'));
+      sockets.set(key, socket);
+    }
+
+    function unwatch(key) {
+      const socket = sockets.get(key);
+      if (socket) {
+        socket.disconnect();
+        sockets.delete(key);
+      }
+    }
+
+    function update(payload) {
+      document.getElementById('uptime').textContent = formatUptime(payload.uptimeSeconds);
+      document.getElementById('sourceCount').textContent = payload.sources.length;
+      document.getElementById('totalClients').textContent = payload.sources.reduce((sum, s) => sum + s.clients, 0);
+
+      for (const s of payload.sources) {
+        ensureRendered(s.key);
+        const h = healthOf(s);
+        const badge = document.getElementById(`badge-${s.key}`);
+        badge.className = `badge ${h.cls}`;
+        badge.textContent = h.text;
+        document.getElementById(`clients-${s.key}`).textContent = s.clients;
+        document.getElementById(`kbps-${s.key}`).textContent = s.kbps.toFixed(1);
+        document.getElementById(`host-${s.key}`).textContent = s.host;
+        document.getElementById(`mount-${s.key}`).textContent = s.mountpoint;
+        document.getElementById(`total-${s.key}`).textContent = formatBytes(s.totalBytes);
+        document.getElementById(`last-${s.key}`).textContent =
+          s.lastDataAgoMs === null ? 'never' : `${(s.lastDataAgoMs / 1000).toFixed(1)}s ago`;
+      }
+    }
+
+    async function refresh() {
+      try {
+        const res = await fetch('/metrics', { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        update(await res.json());
+        errorEl.textContent = '';
+      } catch (err) {
+        errorEl.textContent = `failed to load metrics: ${err.message}`;
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 1000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+node_modules/
+
+# runtime config - holds real caster credentials, keep local only.
+# see README.md for the expected shape of settings.cjs / settings-single.json
+settings*
+
+# TLS certs (server-single.cjs auto-generates a self-signed pair here
+# on first run if missing)
+certs/

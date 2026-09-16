@@ -1,0 +1,28 @@
+{
+  "name": "ntrip-test",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.cjs",
+    "start:single": "node server-single.cjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "11.24.0",
+      "onFail": "download"
+    }
+  },
+  "packageManager": "pnpm@11.24.0",
+  "type": "module",
+  "dependencies": {
+    "ntrip-client": "^1.1.1",
+    "selfsigned": "^5.5.0",
+    "socket.io": "^4.8.3"
+  }
+}

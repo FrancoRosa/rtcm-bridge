@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>NTRIP single-source relay test</title>
+  <style>
+    body { font-family: sans-serif; margin: 2rem; }
+    #log { white-space: pre; font-family: monospace; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>NTRIP single-source relay test</h1>
+  <div id="info"></div>
+  <div id="log"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const infoEl = document.getElementById('info');
+    const logEl = document.getElementById('log');
+
+    function log(line) {
+      logEl.textContent = `${new Date().toISOString()} ${line}\n${logEl.textContent}`.slice(0, 5000);
+    }
+
+    socket.on('source', (s) => {
+      infoEl.textContent = `source: ${s.id} (${s.host} / ${s.mountpoint})`;
+    });
+    socket.on('source-error', (msg) => log(`error: ${msg.error}`));
+    socket.on('source-closed', () => log('source closed'));
+    socket.on('rtcm', (msg) => {
+      const bytes = msg.data.byteLength ?? msg.data.length;
+      log(`rtcm: ${bytes} bytes`);
+    });
+  </script>
+</body>
+</html>
