@@ -134,6 +134,18 @@
       return { text: 'stale', cls: 'stale' };
     }
 
+    function formatCoords(lat, lon) {
+      return `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+    }
+
+    function formatStation(station) {
+      if (!station) return 'detecting (RTCM 1005/1006)&hellip;';
+      const type = station.messageType;
+      const coords = formatCoords(station.latitude, station.longitude);
+      const height = station.antennaHeight !== null ? `, antenna +${station.antennaHeight.toFixed(2)}m` : '';
+      return `#${station.stationId} (RTCM ${type}) &middot; ${coords}${height}`;
+    }
+
     function formatBytes(bytes) {
       if (bytes < 1024) return `${bytes} B`;
       if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -168,6 +180,8 @@
           <table>
             <tr><td>host</td><td id="host-${key}"></td></tr>
             <tr><td>mountpoint</td><td id="mount-${key}"></td></tr>
+            <tr><td>configured location</td><td id="location-${key}"></td></tr>
+            <tr><td>broadcast station</td><td id="station-${key}">detecting (RTCM 1005/1006)&hellip;</td></tr>
             <tr><td>total data</td><td id="total-${key}"></td></tr>
             <tr><td>last data</td><td id="last-${key}"></td></tr>
           </table>
@@ -196,6 +210,10 @@
       socket.on('connect', () => log(key, 'connected'));
       socket.on('connect_error', (err) => log(key, `connect_error: ${err.message}`));
       socket.on('rtcm', (data) => log(key, `rtcm: ${data.byteLength ?? data.length} bytes`));
+      socket.on('station', (station) => {
+        document.getElementById(`station-${key}`).innerHTML = formatStation(station);
+        log(key, `station: ${formatStation(station).replace(/&middot;/g, '-').replace(/&hellip;/g, '...')}`);
+      });
       socket.on('source-error', (msg) => log(key, `source-error: ${msg.error}`));
       socket.on('source-closed', () => log(key, 'source closed'));
       sockets.set(key, socket);
@@ -224,6 +242,8 @@
         document.getElementById(`kbps-${s.key}`).textContent = s.kbps.toFixed(1);
         document.getElementById(`host-${s.key}`).textContent = s.host;
         document.getElementById(`mount-${s.key}`).textContent = s.mountpoint;
+        document.getElementById(`location-${s.key}`).textContent = formatCoords(s.latitude, s.longitude);
+        document.getElementById(`station-${s.key}`).innerHTML = formatStation(s.station);
         document.getElementById(`total-${s.key}`).textContent = formatBytes(s.totalBytes);
         document.getElementById(`last-${s.key}`).textContent =
           s.lastDataAgoMs === null ? 'never' : `${(s.lastDataAgoMs / 1000).toFixed(1)}s ago`;

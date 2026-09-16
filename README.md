@@ -115,9 +115,16 @@ node server.cjs        # or: npm start
   (`Invalid namespace`).
 
 - `GET /` — a live dashboard: uptime, total source/client counts, and one
-  expandable panel per source (host, mountpoint, kbps, total bytes, health).
-  Expanding a panel opens a live Socket.IO connection to that source and
-  logs incoming RTCM chunk sizes; collapsing it disconnects again.
+  expandable panel per source (host, mountpoint, configured location, kbps,
+  total bytes, health). Expanding a panel opens a live Socket.IO connection
+  to that source and logs incoming RTCM chunk sizes; collapsing it
+  disconnects again.
+- Every RTCM message is also parsed server-side (`rtcmParser.cjs`) for
+  message type 1005/1006 ("Stationary RTK Reference Station ARP"), which
+  carries the *actual broadcasting* station ID and antenna position -
+  independent of whatever lat/lon happens to be configured for that source.
+  Once seen, a panel's "broadcast station" row shows it live; it stays
+  blank ("detecting...") until the caster sends one of those message types.
 - `GET /metrics` — the JSON behind that page:
   ```json
   {
@@ -127,12 +134,22 @@ node server.cjs        # or: npm start
         "key": "minneapolis",
         "host": "...",
         "mountpoint": "...",
+        "latitude": 45.06,
+        "longitude": -93.27,
         "clients": 0,
         "ready": true,
         "error": false,
         "kbps": 4.8,
         "totalBytes": 918234,
-        "lastDataAgoMs": 812
+        "lastDataAgoMs": 812,
+        "station": {
+          "messageType": 1006,
+          "stationId": 4001,
+          "latitude": 45.061498,
+          "longitude": -93.275634,
+          "altitude": 250.3,
+          "antennaHeight": 1.5
+        }
       }
     ]
   }
@@ -189,8 +206,12 @@ it directly in your firewall rather than proxying it through Caddy.
 
 ## Other files
 
-- `geo.cjs` — WGS84 lat/lon/altitude → ECEF (`llaToEcef`), used to build the
-  GGA sentence sent upstream to each caster.
+- `geo.cjs` — WGS84 lat/lon/altitude ⇄ ECEF (`llaToEcef`/`ecefToLla`); the
+  former builds the GGA sentence sent upstream, the latter turns a parsed
+  RTCM antenna position back into a location.
+- `rtcmParser.cjs` — decodes RTCM v3 message 1005/1006 out of an
+  already-framed, CRC-validated message (as `ntrip-decoder` emits it) to
+  get the broadcasting station's ID and antenna position.
 - `sourceManager.cjs` — used by `server.cjs`; owns one `NtripClient` per
   source plus its Socket.IO namespace.
 - `ntripCaster.cjs` — used by `server-single.cjs`; the raw-TCP NTRIP caster

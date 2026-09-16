@@ -1,5 +1,6 @@
 const { NtripClient } = require('ntrip-client');
 const { llaToEcef } = require('./geo.cjs');
+const { parseRtcmFrame } = require('./rtcmParser.cjs');
 
 const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -29,7 +30,8 @@ class SourceManager {
           totalBytes: 0,
           bytesSinceLastTick: 0,
           kbps: 0,
-          lastDataAt: null
+          lastDataAt: null,
+          station: null // last RTCM 1005/1006 decoded from this source, if any
         }
       ])
     );
@@ -76,12 +78,15 @@ class SourceManager {
       key,
       host: entry.source.host,
       mountpoint: entry.source.mountpoint,
+      latitude: entry.source.latitude,
+      longitude: entry.source.longitude,
       clients: entry.subscriberCount,
       ready: entry.client ? entry.client.isReady : false,
       error: entry.client ? entry.client.isError : false,
       kbps: entry.kbps,
       totalBytes: entry.totalBytes,
-      lastDataAgoMs: entry.lastDataAt ? now - entry.lastDataAt : null
+      lastDataAgoMs: entry.lastDataAt ? now - entry.lastDataAt : null,
+      station: entry.station
     }));
   }
 
@@ -104,6 +109,12 @@ class SourceManager {
       entry.bytesSinceLastTick += data.length;
       entry.lastDataAt = Date.now();
       namespace.emit('rtcm', data);
+
+      const parsed = parseRtcmFrame(data);
+      if (parsed && parsed.stationId !== undefined) {
+        entry.station = parsed;
+        namespace.emit('station', parsed);
+      }
     });
     client.on('error', (err) => {
       namespace.emit('source-error', { source: key, error: String(err) });

@@ -25,4 +25,33 @@ function llaToEcef(latDeg, lonDeg, altM = 0) {
   return [x, y, z];
 }
 
-module.exports = { llaToEcef };
+/**
+ * Convert ECEF xyz back to geodetic lat/lon/altitude (WGS84), by Bowring's
+ * iterative method. Used to turn an RTCM 1005/1006 antenna position back
+ * into a human-readable location.
+ * @param {number} x meters
+ * @param {number} y meters
+ * @param {number} z meters
+ * @returns {{ latitude: number, longitude: number, altitude: number }}
+ */
+function ecefToLla(x, y, z) {
+  const lon = Math.atan2(y, x);
+  const p = Math.sqrt(x * x + y * y);
+
+  let lat = Math.atan2(z, p * (1 - WGS84_E2));
+  let alt = 0;
+  for (let i = 0; i < 5; i++) {
+    const sinLat = Math.sin(lat);
+    const n = WGS84_A / Math.sqrt(1 - WGS84_E2 * sinLat * sinLat);
+    alt = p / Math.cos(lat) - n;
+    lat = Math.atan2(z, p * (1 - WGS84_E2 * (n / (n + alt))));
+  }
+
+  return {
+    latitude: (lat * 180) / Math.PI,
+    longitude: (lon * 180) / Math.PI,
+    altitude: alt
+  };
+}
+
+module.exports = { llaToEcef, ecefToLla };
