@@ -130,9 +130,10 @@ node server.cjs        # or: npm start
   `settings.cjs`, default `1234`) - a bare, unlabeled input, terminal-style,
   centered on screen. `POST /login` with `{"password": "..."}` exchanges it
   for a session token (kept in `localStorage` so a refresh doesn't re-prompt);
-  that token is required as a `Bearer` header on `/metrics` and as
-  `{ auth: { token } }` on every Socket.IO connection, so the RTCM
-  data itself - not just the page shell - is what's actually gated. Tokens
+  that token is required as a `Bearer` header on `/metrics`. This only gates
+  the dashboard/metrics view - the RTCM Socket.IO streams themselves
+  (`/minneapolis`, `/cusco`, etc.) are left open to any client, so a rover
+  or app can connect directly without going through the login flow. Tokens
   are in-memory and reset on server restart; this is a lightweight
   deterrent, not hardened auth (no rate-limiting on login attempts).
 - `GET /metrics` — the JSON behind that page:

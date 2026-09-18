@@ -113,7 +113,10 @@ function main() {
   const io = new Server(httpServer, { cors: { origin: serverConfig.corsOrigin || '*' } });
 
   manager = new SourceManager(settings.sources, io);
-  manager.attach({ authorize: (token) => sessions.has(token) });
+  // the RTCM streams themselves are left open to any Socket.IO client
+  // (rovers, apps, etc.); only the dashboard UI and /metrics are
+  // password-gated, via the /login-issued token checked above
+  manager.attach();
 
   const port = serverConfig.port || 8443;
   const host = serverConfig.host || '0.0.0.0';

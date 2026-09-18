@@ -251,7 +251,7 @@
 
     function watch(key) {
       if (sockets.has(key)) return;
-      const socket = io('/' + key, { auth: { token: authToken } });
+      const socket = io('/' + key);
       socket.on('connect', () => log(key, 'connected'));
       socket.on('connect_error', (err) => log(key, `connect_error: ${err.message}`));
       socket.on('rtcm', (data) => log(key, `rtcm: ${data.byteLength ?? data.length} bytes`));
